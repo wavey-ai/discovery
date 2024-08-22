@@ -2,6 +2,7 @@
 name = "discovery"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Service discovery via dns and vlan"
 repository = "https://github.com/wavey-ai/discovery"
 readme = "README.md"
