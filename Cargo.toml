@@ -2,9 +2,17 @@
 name = "discovery"
 version = "0.1.0"
 edition = "2021"
+description = "Service discovery via dns and vlan"
+repository = "https://github.com/wavey-ai/discovery"
+readme = "README.md"
+
+[[bin]]
+name = "disco"
+path = "src/main.rs"
 
 [dependencies]
 if-addrs = "0.12.0"
 rustdns = "0.4.0"
+structopt = "0.3.26"
 tokio = { version = "1.37.0", features = ["full"] }
 tracing = "0.1.40"

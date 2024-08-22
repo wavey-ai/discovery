@@ -1,7 +1,7 @@
 use rustdns::types::*;
-use rustdns::Message;
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -10,14 +10,21 @@ pub struct Dns {
     domain: String,
     prefix: String,
     regions: Vec<String>,
+    dns_service: SocketAddr, // TODO: support multiple?
 }
 
 impl Dns {
-    pub fn new(domain: String, prefix: String, regions: Vec<String>) -> Self {
+    pub fn new(
+        dns_service: SocketAddr,
+        domain: String,
+        prefix: String,
+        regions: Vec<String>,
+    ) -> Self {
         Dns {
             domain,
             prefix,
             regions,
+            dns_service,
         }
     }
 
@@ -51,7 +58,7 @@ impl Dns {
 
     pub async fn all(&self) -> io::Result<HashMap<String, Vec<String>>> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        socket.connect("8.8.8.8:53").await?; // Google's Public DNS Servers
+        socket.connect(self.dns_service).await?; // Google's Public DNS Servers
 
         let mut res = HashMap::new();
         for r in &self.regions {
@@ -92,7 +99,9 @@ mod tests {
         let regions = vec![String::from("uk-lon")];
         let prefix = String::from("live");
 
-        let dns = Dns::new(domain, prefix, regions);
+        let addr: SocketAddr = ([8, 8, 8, 8], 53).into();
+
+        let dns = Dns::new(addr, domain, prefix, regions);
 
         let res = dns.all().await;
     }
