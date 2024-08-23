@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use tokio::net::UdpSocket;
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::{sleep, Duration, Instant};
 use tracing::{debug, error, info, warn};
 
@@ -19,13 +19,20 @@ pub struct Node {
 
 pub struct Nodes {
     data: Arc<RwLock<HashMap<Ipv4Addr, Node>>>,
+    tx: broadcast::Sender<Ipv4Addr>,
 }
 
 impl Nodes {
     pub fn new() -> Self {
+        let (tx, _) = broadcast::channel::<Ipv4Addr>(16);
         Nodes {
             data: Arc::new(RwLock::new(HashMap::new())),
+            tx,
         }
+    }
+
+    pub fn rx(&self) -> broadcast::Receiver<Ipv4Addr> {
+        self.tx.subscribe()
     }
 
     pub fn test(&self, ip: Ipv4Addr) -> bool {
@@ -39,6 +46,8 @@ impl Nodes {
             ip,
             last_seen: Instant::now(),
         });
+
+        let _ = self.tx.send(ip);
     }
 
     pub fn all(&self) -> Vec<Node> {
@@ -57,7 +66,21 @@ impl Nodes {
     }
 }
 
-pub async fn discover(nodes: Arc<Nodes>) -> oneshot::Sender<()> {
+pub async fn discover() -> Result<
+    (
+        oneshot::Receiver<()>,
+        oneshot::Receiver<()>,
+        watch::Sender<()>,
+        Arc<Nodes>,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let nodes = Arc::new(Nodes::new());
+
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let (up_tx, up_rx) = oneshot::channel();
+    let (fin_tx, fin_rx) = oneshot::channel();
+
     let own_ip = get_own_private_ip().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
     info!("Own IP address: {}", own_ip);
 
@@ -73,112 +96,56 @@ pub async fn discover(nodes: Arc<Nodes>) -> oneshot::Sender<()> {
         own_ip.to_string().rsplit('.').nth(1).unwrap_or("")
     );
 
-    let (broadcast_tx, broadcast_rx) = oneshot::channel();
-    let (receive_tx, receive_rx) = oneshot::channel();
-    let (reap_tx, reap_rx) = oneshot::channel();
-    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let _ = up_tx.send(());
 
-    tokio::spawn(broadcast_own_ip(
-        own_ip.clone(),
-        socket.clone(),
-        broadcast_ip,
-        broadcast_rx,
-    ));
-    tokio::spawn(receive_broadcasts(
-        socket.clone(),
-        own_ip.clone(),
-        nodes.clone(),
-        receive_rx,
-    ));
-    tokio::spawn(reap_nodes(nodes.clone(), reap_rx));
-
+    let nodes_clone = Arc::clone(&nodes);
     tokio::spawn(async move {
-        cancel_rx.await;
-        broadcast_tx.send(());
-        receive_tx.send(());
-        reap_tx.send(());
-    });
-
-    cancel_tx
-}
-
-async fn receive_broadcasts(
-    socket: Arc<UdpSocket>,
-    own_ip: Ipv4Addr,
-    nodes: Arc<Nodes>,
-    mut cancel_rx: oneshot::Receiver<()>,
-) {
-    let mut buffer = [0; 1024];
-    loop {
-        tokio::select! {
-            _ = &mut cancel_rx => {
-                info!("Cancelling receive_broadcasts task");
-                break;
-            }
-            result = socket.recv_from(&mut buffer) => {
-                match result {
-                    Ok((_, src_addr)) => {
-                        if let Some(discovered_ip) = extract_private_ip(&src_addr) {
-                            if discovered_ip != own_ip {
-                              if !nodes.test(discovered_ip) {
-                                  info!("Discovered new node: {}", discovered_ip);
-                              }
-                              // always add nodes to refresh last_seen
-                              nodes.add(discovered_ip);
-                            };
-                        } else {
-                            warn!("Received broadcast from non-private IP: {}", src_addr.ip());
+        let mut buffer = [0; 1024];
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    info!("Shutdown signal received, stopping tasks");
+                    break;
+                }
+                _ = sleep(BROADCAST_INTERVAL) => {
+                    nodes_clone.reap();
+                    match socket
+                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Failed to send broadcast: {}", e);
                         }
                     }
-                    Err(e) => {
-                        warn!("Error receiving broadcast: {}", e);
+                }
+                result = socket.recv_from(&mut buffer) => {
+                    match result {
+                        Ok((_, src_addr)) => {
+                            if let Some(discovered_ip) = extract_private_ip(&src_addr) {
+                                if discovered_ip != own_ip {
+                                    if !nodes_clone.test(discovered_ip) {
+                                        info!("Discovered new node: {}", discovered_ip);
+                                    }
+                                    // always add nodes to refresh last_seen
+                                    nodes_clone.add(discovered_ip);
+                                };
+                            } else {
+                                warn!("Received broadcast from non-private IP: {}", src_addr.ip());
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error receiving broadcast: {}", e);
+                        }
                     }
                 }
             }
         }
-    }
-}
 
-async fn broadcast_own_ip(
-    own_ip: Ipv4Addr,
-    socket: Arc<UdpSocket>,
-    broadcast_ip: String,
-    mut cancel_rx: oneshot::Receiver<()>,
-) {
-    loop {
-        tokio::select! {
-            _ = &mut cancel_rx => {
-                info!("Cancelling broadcast_own_ip task");
-                break;
-            }
-            _ = sleep(BROADCAST_INTERVAL) => {
-                match socket
-                    .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
-                    .await
-                {
-                    Ok(_) => {
-                    }
-                    Err(e) => {
-                        warn!("Failed to send broadcast: {}", e);
-                    }
-                }
-            }
-        }
-    }
-}
+        let _ = fin_tx.send(());
+    });
 
-async fn reap_nodes(nodes: Arc<Nodes>, mut cancel_rx: oneshot::Receiver<()>) {
-    loop {
-        tokio::select! {
-            _ = &mut cancel_rx => {
-                info!("Cancelling reap_nodes task");
-                break;
-            }
-            _ = sleep(BROADCAST_INTERVAL) => {
-                nodes.reap();
-            }
-        }
-    }
+    Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
 }
 
 pub fn get_own_private_ip() -> Option<Ipv4Addr> {
