@@ -1,6 +1,6 @@
 use discovery::dns::Dns;
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{Shutdown, SocketAddr};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -14,7 +14,7 @@ enum Command {
         prefix: String,
 
         #[structopt(long)]
-        regions: String,
+        tags: String,
 
         #[structopt(long, default_value = "8.8.8.8:53")]
         dns_server: String,
@@ -30,20 +30,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             dns_server,
             domain,
             prefix,
-            regions,
+            tags,
         } => {
             let dns_server: SocketAddr = dns_server.parse()?;
-            let regions: Vec<String> = regions.split(',').map(|s| s.to_string()).collect();
+            let tags: Vec<String> = tags.split(',').map(|s| s.to_string()).collect();
             let mut uniq_ips = HashSet::new();
 
-            if let Ok(res) = Dns::new(dns_server, domain, prefix, regions).all().await {
-                for (_, ips) in res {
-                    uniq_ips.extend(ips.into_iter().map(|ip| ip.to_string()));
-                }
+            let dns = Dns::new(dns_server, domain);
+            let (up_rx, fin_rx, shutdown_rx, nodes) = dns.discover(prefix, tags).await.unwrap();
 
-                let all_ips: Vec<_> = uniq_ips.into_iter().collect();
-                println!("{}", all_ips.join(" "));
+            let _ = up_rx.await;
+
+            for node in &nodes.all() {
+                dbg!(node);
+                uniq_ips.insert(node.ip());
             }
+
+            let all_ips: Vec<_> = uniq_ips.into_iter().collect();
+            println!(
+                "{}",
+                all_ips
+                    .into_iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            );
+
+            let _ = shutdown_rx.send(());
         }
     }
 

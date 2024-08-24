@@ -1,70 +1,14 @@
+use crate::{Node, Nodes, BROADCAST_INTERVAL, MAX_SILENT_INTERVALS};
 use if_addrs::get_if_addrs;
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, oneshot, watch};
-use tokio::time::{sleep, Duration, Instant};
+use tokio::sync::{oneshot, watch};
+use tokio::time::sleep;
+use tokio::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-const BROADCAST_INTERVAL: Duration = Duration::from_secs(5);
 const BROADCAST_PORT: u16 = 12345;
-const MAX_SILENT_INTERVALS: u64 = 10;
-
-#[derive(Debug, Clone)]
-pub struct Node {
-    pub ip: Ipv4Addr,
-    last_seen: Instant,
-}
-
-pub struct Nodes {
-    data: Arc<RwLock<HashMap<Ipv4Addr, Node>>>,
-    tx: broadcast::Sender<Ipv4Addr>,
-}
-
-impl Nodes {
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel::<Ipv4Addr>(16);
-        Nodes {
-            data: Arc::new(RwLock::new(HashMap::new())),
-            tx,
-        }
-    }
-
-    pub fn rx(&self) -> broadcast::Receiver<Ipv4Addr> {
-        self.tx.subscribe()
-    }
-
-    pub fn test(&self, ip: Ipv4Addr) -> bool {
-        let lock = self.data.read().unwrap();
-        lock.contains_key(&ip)
-    }
-
-    pub fn add(&self, ip: Ipv4Addr) {
-        let mut lock = self.data.write().unwrap();
-        lock.entry(ip.clone()).or_insert(Node {
-            ip,
-            last_seen: Instant::now(),
-        });
-
-        let _ = self.tx.send(ip);
-    }
-
-    pub fn all(&self) -> Vec<Node> {
-        let lock = self.data.read().unwrap();
-        lock.values().cloned().collect()
-    }
-
-    fn reap(&self) {
-        let mut nodes_map = self.data.write().unwrap();
-        let current_time = Instant::now();
-        nodes_map.retain(|_, node| {
-            let node_last_seen_duration = current_time.duration_since(node.last_seen);
-            let silent_intervals_seconds = MAX_SILENT_INTERVALS * BROADCAST_INTERVAL.as_secs();
-            node_last_seen_duration.as_secs() <= silent_intervals_seconds
-        });
-    }
-}
 
 pub async fn discover() -> Result<
     (
@@ -128,7 +72,7 @@ pub async fn discover() -> Result<
                                         info!("Discovered new node: {}", discovered_ip);
                                     }
                                     // always add nodes to refresh last_seen
-                                    nodes_clone.add(discovered_ip);
+                                    nodes_clone.add(discovered_ip, None, None);
                                 };
                             } else {
                                 warn!("Received broadcast from non-private IP: {}", src_addr.ip());
