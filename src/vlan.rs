@@ -92,6 +92,26 @@ pub async fn discover() -> Result<
     Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
 }
 
+pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
+    let addrs = match get_if_addrs() {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            warn!("Failed to get network interfaces: {}", e);
+            return None;
+        }
+    };
+
+    for addr in addrs {
+        if addr.name == interface {
+            if let IpAddr::V4(ip) = addr.ip() {
+                return Some(ip);
+            }
+        }
+    }
+
+    None
+}
+
 pub fn get_own_private_ip() -> Option<Ipv4Addr> {
     let addrs = match get_if_addrs() {
         Ok(addrs) => addrs,
