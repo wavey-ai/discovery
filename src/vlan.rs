@@ -55,16 +55,13 @@ pub async fn discover() -> Result<
                 }
                 _ = sleep(BROADCAST_INTERVAL) => {
                     nodes_clone.reap();
-                        dbg!("here");
                     match socket_clone
                         .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
                         .await
                     {
                         Ok(_) => {
-                            dbg!("hi");
                             }
                         Err(e) => {
-                            dbg!(&e);
                             error!("Failed to send broadcast: {}", e);
                         }
                     }
