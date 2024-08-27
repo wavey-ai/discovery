@@ -35,10 +35,14 @@ pub async fn discover() -> Result<
     );
     socket.set_broadcast(true).expect("Failed to set broadcast");
 
-    let broadcast_ip = format!(
-        "{}.255",
-        own_ip.to_string().rsplit('.').nth(1).unwrap_or("")
-    );
+    let ip_str = own_ip.to_string();
+    let octets: Vec<&str> = ip_str.split('.').collect();
+
+    if octets.len() != 4 {
+        return Err("Invalid IP address format".into());
+    }
+
+    let broadcast_ip = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
 
     let _ = up_tx.send(());
 
