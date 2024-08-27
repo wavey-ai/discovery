@@ -9,8 +9,8 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::{debug, error, info, warn};
 
 pub async fn discover(
-    domain: String,
     dns_service: SocketAddr,
+    domain: String,
     prefix: String,
     tags: Vec<String>,
 ) -> Result<
