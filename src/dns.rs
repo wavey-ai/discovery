@@ -8,66 +8,53 @@ use tokio::sync::{oneshot, watch};
 use tokio::time::{sleep, timeout, Duration};
 use tracing::{debug, error, info, warn};
 
-pub struct Dns {
+pub async fn discover(
     domain: String,
     dns_service: SocketAddr,
-}
+    prefix: String,
+    tags: Vec<String>,
+) -> Result<
+    (
+        oneshot::Receiver<()>,
+        oneshot::Receiver<()>,
+        watch::Sender<()>,
+        Arc<Nodes>,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let (up_tx, up_rx) = oneshot::channel();
+    let (fin_tx, fin_rx) = oneshot::channel();
 
-impl Dns {
-    pub fn new(dns_service: SocketAddr, domain: String) -> Self {
-        Dns {
-            domain,
-            dns_service,
-        }
-    }
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    socket.connect(dns_service).await?;
 
-    pub async fn discover(
-        &self,
-        prefix: String,
-        tags: Vec<String>,
-    ) -> Result<
-        (
-            oneshot::Receiver<()>,
-            oneshot::Receiver<()>,
-            watch::Sender<()>,
-            Arc<Nodes>,
-        ),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(());
-        let (up_tx, up_rx) = oneshot::channel();
-        let (fin_tx, fin_rx) = oneshot::channel();
+    let nodes = Arc::new(Nodes::new());
+    let dns_service = dns_service.clone();
+    let domain = domain.clone();
+    let nodes_clone = Arc::clone(&nodes);
 
-        let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        socket.connect(self.dns_service).await?;
+    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
 
-        let nodes = Arc::new(Nodes::new());
-        let dns_service = self.dns_service.clone();
-        let domain = self.domain.clone();
-        let nodes_clone = Arc::clone(&nodes);
+    let _ = up_tx.send(());
 
-        perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
-
-        let _ = up_tx.send(());
-
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = shutdown_rx.changed() => {
-                        info!("Shutdown signal received, stopping tasks");
-                        break;
-                    }
-                    _ = sleep(DNS_CHECK_INTERVAL) => {
-                        perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
-                    },
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    info!("Shutdown signal received, stopping tasks");
+                    break;
                 }
+                _ = sleep(DNS_CHECK_INTERVAL) => {
+                    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
+                },
             }
+        }
 
-            let _ = fin_tx.send(());
-        });
+        let _ = fin_tx.send(());
+    });
 
-        Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
-    }
+    Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
 }
 
 async fn perform_dns_checks(
@@ -146,10 +133,5 @@ mod tests {
         let prefix = String::from("live");
 
         let addr: SocketAddr = ([8, 8, 8, 8], 53).into();
-
-        let dns = Dns::new(addr, domain);
-
-        // Start DNS checks and return Nodes
-        let nodes = dns.discover(prefix, tags).await.unwrap();
     }
 }

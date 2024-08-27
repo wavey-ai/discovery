@@ -59,8 +59,7 @@ pub async fn discover() -> Result<
                         .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
                         .await
                     {
-                        Ok(_) => {
-                            }
+                        Ok(_) => {}
                         Err(e) => {
                             error!("Failed to send broadcast: {}", e);
                         }
