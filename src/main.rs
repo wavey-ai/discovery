@@ -1,4 +1,4 @@
-use discovery::dns::Dns;
+use discovery::{dns::Dns, vlan};
 use std::collections::HashSet;
 use std::net::{Shutdown, SocketAddr};
 use structopt::StructOpt;
@@ -19,6 +19,7 @@ enum Command {
         #[structopt(long, default_value = "8.8.8.8:53")]
         dns_server: String,
     },
+    Vlan {},
 }
 
 #[tokio::main]
@@ -26,6 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Command::from_args();
 
     match args {
+        Command::Vlan {} => {
+            let (_up, _fin, _shutodwn_tx, nodes) = vlan::discover().await.unwrap();
+            while let Ok(ip) = nodes.rx().recv().await {
+                dbg!(ip);
+            }
+        }
         Command::Dns {
             dns_server,
             domain,

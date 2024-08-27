@@ -43,25 +43,43 @@ pub async fn discover() -> Result<
     let _ = up_tx.send(());
 
     let nodes_clone = Arc::clone(&nodes);
+    let socket_clone = Arc::clone(&socket);
+    let mut shutdown_clone = shutdown_rx.clone();
+    // Task for broadcasting
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_clone.changed() => {
+                    info!("Shutdown signal received, stopping broadcast task");
+                    break;
+                }
+                _ = sleep(BROADCAST_INTERVAL) => {
+                    nodes_clone.reap();
+                    match socket_clone
+                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
+                        .await
+                    {
+                        Ok(_) => {
+                        }
+                        Err(e) => {
+                            error!("Failed to send broadcast: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let nodes_clone = Arc::clone(&nodes);
+
+    // Task for receiving
     tokio::spawn(async move {
         let mut buffer = [0; 1024];
         loop {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
-                    info!("Shutdown signal received, stopping tasks");
+                    info!("Shutdown signal received, stopping receive task");
                     break;
-                }
-                _ = sleep(BROADCAST_INTERVAL) => {
-                    nodes_clone.reap();
-                    match socket
-                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("Failed to send broadcast: {}", e);
-                        }
-                    }
                 }
                 result = socket.recv_from(&mut buffer) => {
                     match result {
@@ -85,8 +103,6 @@ pub async fn discover() -> Result<
                 }
             }
         }
-
-        let _ = fin_tx.send(());
     });
 
     Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
