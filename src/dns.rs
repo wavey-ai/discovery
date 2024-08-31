@@ -1,6 +1,8 @@
 use crate::{Node, Nodes, BROADCAST_INTERVAL, DNS_CHECK_INTERVAL};
+use if_addrs::get_if_addrs;
 use rustdns::types::*;
 use std::io;
+use std::net::IpAddr;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -65,24 +67,26 @@ async fn perform_dns_checks(
     socket: &UdpSocket,
     nodes: &Arc<Nodes>,
 ) {
-    for tag in tags {
-        let mut seq = 0;
-        seq += 1;
-        let subdomain = format!("{}-{}-{}", prefix, tag, seq);
-        match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
-            Ok(Some(ip)) => {
-                if !nodes.test(ip.to_owned()) {
-                    println!("Discovered new node via DNS: {}", ip);
+    if let Some(own_ip) = get_ip("eth0") {
+        for tag in tags {
+            let mut seq = 0;
+            seq += 1;
+            let subdomain = format!("{}-{}-{}", prefix, tag, seq);
+            match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
+                Ok(Some(ip)) => {
+                    if ip != own_ip && !nodes.test(ip.to_owned()) {
+                        println!("Discovered new node via DNS: {}", ip);
+                    }
+                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
                 }
-                nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
-            }
-            Ok(None) => {
-                info!("No DNS results subdomain={} domain={}", subdomain, domain);
-                break;
-            }
-            Err(e) => {
-                eprintln!("Error querying {}: {}", subdomain, e);
-                break;
+                Ok(None) => {
+                    info!("No DNS results subdomain={} domain={}", subdomain, domain);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error querying {}: {}", subdomain, e);
+                    break;
+                }
             }
         }
     }
@@ -120,6 +124,26 @@ async fn get_dns(
     }
 
     Ok(None)
+}
+
+pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
+    let addrs = match get_if_addrs() {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            warn!("Failed to get network interfaces: {}", e);
+            return None;
+        }
+    };
+
+    for addr in addrs {
+        if addr.name == interface {
+            if let IpAddr::V4(ip) = addr.ip() {
+                return Some(ip);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

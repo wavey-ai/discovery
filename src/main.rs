@@ -1,4 +1,4 @@
-use discovery::{dns::Dns, vlan};
+use discovery::{dns::discover, vlan};
 use std::collections::HashSet;
 use std::net::{Shutdown, SocketAddr};
 use structopt::StructOpt;
@@ -43,8 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let tags: Vec<String> = tags.split(',').map(|s| s.to_string()).collect();
             let mut uniq_ips = HashSet::new();
 
-            let dns = Dns::new(dns_server, domain);
-            let (up_rx, fin_rx, shutdown_rx, nodes) = dns.discover(prefix, tags).await.unwrap();
+            let (up_rx, fin_rx, shutdown_rx, nodes) =
+                discover(dns_server, domain, prefix, tags).await.unwrap();
 
             let _ = up_rx.await;
 

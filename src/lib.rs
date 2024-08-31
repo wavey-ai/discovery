@@ -55,16 +55,25 @@ impl Nodes {
         lock.contains_key(&ip)
     }
 
-    pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>) {
+    pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>) -> bool {
         let mut lock = self.data.write().unwrap();
-        lock.entry(ip.clone()).or_insert(Node {
-            ip,
-            last_seen: Instant::now(),
-            tag,
-            seq,
-        });
+        if !lock.contains_key(&ip) {
+            lock.insert(
+                ip.clone(),
+                Node {
+                    ip,
+                    last_seen: Instant::now(),
+                    tag,
+                    seq,
+                },
+            );
 
-        let _ = self.tx.send(ip);
+            let _ = self.tx.send(ip);
+
+            return true;
+        }
+
+        false
     }
 
     pub fn all(&self) -> Vec<Node> {
