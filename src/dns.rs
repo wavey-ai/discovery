@@ -69,22 +69,24 @@ async fn perform_dns_checks(
 ) {
     for tag in tags {
         let mut seq = 0;
-        seq += 1;
-        let subdomain = format!("{}-{}-{}", prefix, tag, seq);
-        match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
-            Ok(Some(ip)) => {
-                if !nodes.test(ip.to_owned()) {
-                    println!("Discovered new node via DNS: {}", ip);
+        while seq < 100 {
+            seq += 1;
+            let subdomain = format!("{}-{}-{}", prefix, tag, seq);
+            match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
+                Ok(Some(ip)) => {
+                    if !nodes.test(ip.to_owned()) {
+                        println!("Discovered new node via DNS: {}", ip);
+                    }
+                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
                 }
-                nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
-            }
-            Ok(None) => {
-                info!("No DNS results subdomain={} domain={}", subdomain, domain);
-                break;
-            }
-            Err(e) => {
-                eprintln!("Error querying {}: {}", subdomain, e);
-                break;
+                Ok(None) => {
+                    info!("No DNS results subdomain={} domain={}", subdomain, domain);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error querying {}: {}", subdomain, e);
+                    break;
+                }
             }
         }
     }
@@ -117,7 +119,9 @@ async fn get_dns(
 
     for r in answer.answers {
         if let Resource::A(ip) = r.resource {
-            return Ok(Some(ip.into()));
+            if !ip.is_loopback() {
+                return Ok(Some(ip.into()));
+            }
         }
     }
 
