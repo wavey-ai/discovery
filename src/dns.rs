@@ -1,5 +1,4 @@
 use crate::{Node, Nodes, BROADCAST_INTERVAL, DNS_CHECK_INTERVAL};
-use if_addrs::get_if_addrs;
 use rustdns::types::*;
 use std::io;
 use std::net::IpAddr;
@@ -11,6 +10,7 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::{debug, error, info, warn};
 
 pub async fn discover(
+    interfaces: Vec<&str>,
     dns_service: SocketAddr,
     domain: String,
     prefix: String,
@@ -31,7 +31,7 @@ pub async fn discover(
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.connect(dns_service).await?;
 
-    let nodes = Arc::new(Nodes::new());
+    let nodes = Arc::new(Nodes::new(interfaces));
     let dns_service = dns_service.clone();
     let domain = domain.clone();
     let nodes_clone = Arc::clone(&nodes);
@@ -126,26 +126,6 @@ async fn get_dns(
     }
 
     Ok(None)
-}
-
-pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
-    let addrs = match get_if_addrs() {
-        Ok(addrs) => addrs,
-        Err(e) => {
-            warn!("Failed to get network interfaces: {}", e);
-            return None;
-        }
-    };
-
-    for addr in addrs {
-        if addr.name == interface {
-            if let IpAddr::V4(ip) = addr.ip() {
-                return Some(ip);
-            }
-        }
-    }
-
-    None
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ pub async fn discover() -> Result<
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let nodes = Arc::new(Nodes::new());
+    let nodes = Arc::new(Nodes::new(vec!["eth0"]));
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
     let (up_tx, up_rx) = oneshot::channel();
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_nodes_add_and_test() {
-        let nodes: Nodes = Nodes::new();
+        let nodes: Nodes = Nodes::new([]);
         nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
         assert!(nodes.test(Ipv4Addr::from_str("127.0.0.1").unwrap()));
         assert!(!nodes.test(Ipv4Addr::from_str("192.168.0.1").unwrap()));
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_nodes_all() {
-        let nodes: Nodes = Nodes::new();
+        let nodes: Nodes = Nodes::new([]);
         nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
         nodes.add(Ipv4Addr::from_str("192.168.0.1").unwrap());
         let all_nodes: Vec<Node> = nodes.all();
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_nodes_reap() {
-        let nodes: Nodes = Nodes::new();
+        let nodes: Nodes = Nodes::new([]);
         nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
         nodes.add(Ipv4Addr::from_str("192.168.0.1").unwrap());
         sleep(Duration::from_secs(

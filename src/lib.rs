@@ -2,11 +2,15 @@ pub mod dns;
 pub mod server;
 pub mod vlan;
 
+use if_addrs::get_if_addrs;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use tokio::time::{Duration, Instant};
+use tracing::{error, info, warn};
 
 const DNS_CHECK_INTERVAL: Duration = Duration::from_secs(3600);
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(5);
@@ -33,16 +37,25 @@ impl Node {
 }
 
 pub struct Nodes {
+    own_ips: HashSet<Ipv4Addr>,
     data: Arc<RwLock<HashMap<Ipv4Addr, Node>>>,
     tx: broadcast::Sender<Ipv4Addr>,
 }
 
 impl Nodes {
-    pub fn new() -> Self {
+    pub fn new(interfaces: Vec<&str>) -> Self {
         let (tx, _) = broadcast::channel::<Ipv4Addr>(16);
+        let mut own_ips = HashSet::new();
+        for interface in interfaces {
+            if let Some(ip) = get_ip(interface) {
+                own_ips.insert(ip);
+            }
+        }
+        own_ips.insert(Ipv4Addr::new(127, 0, 0, 1));
         Nodes {
             data: Arc::new(RwLock::new(HashMap::new())),
             tx,
+            own_ips,
         }
     }
 
@@ -57,7 +70,7 @@ impl Nodes {
 
     pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>) -> bool {
         let mut lock = self.data.write().unwrap();
-        if !lock.contains_key(&ip) {
+        if !lock.contains_key(&ip) && !self.own_ips.contains(&ip) {
             lock.insert(
                 ip.clone(),
                 Node {
@@ -90,4 +103,24 @@ impl Nodes {
             node_last_seen_duration.as_secs() <= silent_intervals_seconds
         });
     }
+}
+
+pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
+    let addrs = match get_if_addrs() {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            warn!("Failed to get network interfaces: {}", e);
+            return None;
+        }
+    };
+
+    for addr in addrs {
+        if addr.name == interface {
+            if let IpAddr::V4(ip) = addr.ip() {
+                return Some(ip);
+            }
+        }
+    }
+
+    None
 }

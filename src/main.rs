@@ -44,7 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut uniq_ips = HashSet::new();
 
             let (up_rx, fin_rx, shutdown_rx, nodes) =
-                discover(dns_server, domain, prefix, tags).await.unwrap();
+                discover(vec![], dns_server, domain, prefix, tags)
+                    .await
+                    .unwrap();
 
             let _ = up_rx.await;
 
