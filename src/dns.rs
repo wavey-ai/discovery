@@ -95,7 +95,7 @@ async fn perform_dns_checks(
             match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
                 Ok(Some(ip)) => {
                     if !nodes.test(&ip) && !own_ips.contains(&ip) {
-                        println!("Discovered new node via DNS: {}", ip);
+                        info!("Discovered new node via DNS: {}", ip);
                     }
 
                     // always add to update last seen

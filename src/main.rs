@@ -51,7 +51,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let _ = up_rx.await;
 
             for node in &nodes.all() {
-                dbg!(node);
                 uniq_ips.insert(node.ip());
             }
 
