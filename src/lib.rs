@@ -26,7 +26,7 @@ impl Node {
         self.ip.clone()
     }
     pub fn addr(&self, port: u16) -> SocketAddr {
-        SocketAddr::new(self.ip(), port)
+        SocketAddr::new(std::net::IpAddr::V4(self.ip()), port)
     }
     pub fn tag(&self) -> Option<&String> {
         self.tag.as_ref()
