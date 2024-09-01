@@ -19,7 +19,7 @@ pub async fn discover() -> Result<
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let nodes = Arc::new(Nodes::new(vec!["eth0"]));
+    let nodes = Arc::new(Nodes::new());
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(());
     let (up_tx, up_rx) = oneshot::channel();
@@ -89,7 +89,7 @@ pub async fn discover() -> Result<
                         Ok((_, src_addr)) => {
                             if let Some(discovered_ip) = extract_private_ip(&src_addr) {
                                 if discovered_ip != own_ip {
-                                    if !nodes_clone.test(discovered_ip) {
+                                    if !nodes_clone.test(&discovered_ip) {
                                         info!("Discovered new node: {}", discovered_ip);
                                     }
                                     // always add nodes to refresh last_seen

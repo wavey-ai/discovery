@@ -1,5 +1,7 @@
 use crate::{Node, Nodes, BROADCAST_INTERVAL, DNS_CHECK_INTERVAL};
+use if_addrs::get_if_addrs;
 use rustdns::types::*;
+use std::collections::HashSet;
 use std::io;
 use std::net::IpAddr;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -31,12 +33,29 @@ pub async fn discover(
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.connect(dns_service).await?;
 
-    let nodes = Arc::new(Nodes::new(interfaces));
+    let nodes = Arc::new(Nodes::new());
     let dns_service = dns_service.clone();
     let domain = domain.clone();
     let nodes_clone = Arc::clone(&nodes);
 
-    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
+    let mut own_ips = HashSet::new();
+    for interface in interfaces {
+        if let Some(ip) = get_ip(interface) {
+            own_ips.insert(ip);
+        }
+    }
+    own_ips.insert(Ipv4Addr::new(127, 0, 0, 1));
+
+    perform_dns_checks(
+        &dns_service,
+        &domain,
+        &prefix,
+        &tags,
+        &socket,
+        &nodes_clone,
+        &own_ips,
+    )
+    .await;
 
     let _ = up_tx.send(());
 
@@ -48,7 +67,7 @@ pub async fn discover(
                     break;
                 }
                 _ = sleep(DNS_CHECK_INTERVAL) => {
-                    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone).await;
+                    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone, &own_ips).await;
                 },
             }
         }
@@ -66,6 +85,7 @@ async fn perform_dns_checks(
     tags: &[String],
     socket: &UdpSocket,
     nodes: &Arc<Nodes>,
+    own_ips: &HashSet<Ipv4Addr>,
 ) {
     for tag in tags {
         let mut seq = 0;
@@ -74,9 +94,11 @@ async fn perform_dns_checks(
             let subdomain = format!("{}-{}-{}", prefix, tag, seq);
             match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
                 Ok(Some(ip)) => {
-                    if !nodes.test(ip.to_owned()) {
+                    if !nodes.test(&ip) && !own_ips.contains(&ip) {
                         println!("Discovered new node via DNS: {}", ip);
                     }
+
+                    // always add to update last seen
                     nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
                 }
                 Ok(None) => {
@@ -126,6 +148,26 @@ async fn get_dns(
     }
 
     Ok(None)
+}
+
+pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
+    let addrs = match get_if_addrs() {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            warn!("Failed to get network interfaces: {}", e);
+            return None;
+        }
+    };
+
+    for addr in addrs {
+        if addr.name == interface {
+            if let IpAddr::V4(ip) = addr.ip() {
+                return Some(ip);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
