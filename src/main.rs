@@ -19,7 +19,10 @@ enum Command {
         #[structopt(long, default_value = "8.8.8.8:53")]
         dns_server: String,
     },
-    Vlan {},
+    Vlan {
+        #[structopt(long, default_value = "12345")]
+        broadcast_port: u16,
+    },
 }
 
 #[tokio::main]
@@ -27,8 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Command::from_args();
 
     match args {
-        Command::Vlan {} => {
-            let (_up, _fin, _shutodwn_tx, nodes) = vlan::discover().await.unwrap();
+        Command::Vlan { broadcast_port } => {
+            let (_up, _fin, _shutodwn_tx, nodes) = vlan::discover(broadcast_port).await.unwrap();
             while let Ok(ip) = nodes.rx().recv().await {
                 dbg!(ip);
             }

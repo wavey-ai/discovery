@@ -3,14 +3,14 @@ use if_addrs::get_if_addrs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::sleep;
 use tokio::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-const BROADCAST_PORT: u16 = 12345;
-
-pub async fn discover() -> Result<
+pub async fn discover(
+    broadcast_port: u16,
+) -> Result<
     (
         oneshot::Receiver<()>,
         oneshot::Receiver<()>,
@@ -29,7 +29,7 @@ pub async fn discover() -> Result<
     info!("Own IP address: {}", own_ip);
 
     let socket = Arc::new(
-        UdpSocket::bind(("0.0.0.0", BROADCAST_PORT))
+        UdpSocket::bind(("0.0.0.0", broadcast_port))
             .await
             .expect("Failed to bind socket"),
     );
@@ -60,7 +60,7 @@ pub async fn discover() -> Result<
                 _ = sleep(BROADCAST_INTERVAL) => {
                     nodes_clone.reap();
                     match socket_clone
-                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), BROADCAST_PORT))
+                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), broadcast_port))
                         .await
                     {
                         Ok(_) => {}
