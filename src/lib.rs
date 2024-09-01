@@ -3,7 +3,7 @@ pub mod server;
 pub mod vlan;
 
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use tokio::time::{Duration, Instant};
@@ -24,6 +24,9 @@ pub struct Node {
 impl Node {
     pub fn ip(&self) -> Ipv4Addr {
         self.ip.clone()
+    }
+    pub fn addr(&self, port: u16) -> SocketAddr {
+        SocketAddr::new(self.ip(), port)
     }
     pub fn tag(&self) -> Option<&String> {
         self.tag.as_ref()
