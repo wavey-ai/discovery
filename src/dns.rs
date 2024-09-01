@@ -67,26 +67,24 @@ async fn perform_dns_checks(
     socket: &UdpSocket,
     nodes: &Arc<Nodes>,
 ) {
-    if let Some(own_ip) = get_ip("eth0") {
-        for tag in tags {
-            let mut seq = 0;
-            seq += 1;
-            let subdomain = format!("{}-{}-{}", prefix, tag, seq);
-            match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
-                Ok(Some(ip)) => {
-                    if ip != own_ip && !nodes.test(ip.to_owned()) {
-                        println!("Discovered new node via DNS: {}", ip);
-                    }
-                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
+    for tag in tags {
+        let mut seq = 0;
+        seq += 1;
+        let subdomain = format!("{}-{}-{}", prefix, tag, seq);
+        match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
+            Ok(Some(ip)) => {
+                if !nodes.test(ip.to_owned()) {
+                    println!("Discovered new node via DNS: {}", ip);
                 }
-                Ok(None) => {
-                    info!("No DNS results subdomain={} domain={}", subdomain, domain);
-                    break;
-                }
-                Err(e) => {
-                    eprintln!("Error querying {}: {}", subdomain, e);
-                    break;
-                }
+                nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
+            }
+            Ok(None) => {
+                info!("No DNS results subdomain={} domain={}", subdomain, domain);
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error querying {}: {}", subdomain, e);
+                break;
             }
         }
     }
