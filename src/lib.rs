@@ -38,19 +38,19 @@ impl Node {
 
 pub struct Nodes {
     data: Arc<RwLock<HashMap<Ipv4Addr, Node>>>,
-    tx: broadcast::Sender<Ipv4Addr>,
+    tx: broadcast::Sender<Node>,
 }
 
 impl Nodes {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel::<Ipv4Addr>(16);
+        let (tx, _) = broadcast::channel::<Node>(16);
         Nodes {
             data: Arc::new(RwLock::new(HashMap::new())),
             tx,
         }
     }
 
-    pub fn rx(&self) -> broadcast::Receiver<Ipv4Addr> {
+    pub fn rx(&self) -> broadcast::Receiver<Node> {
         self.tx.subscribe()
     }
 
@@ -60,21 +60,20 @@ impl Nodes {
     }
 
     pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>) {
+        let node = Node {
+            ip,
+            last_seen: Instant::now(),
+            tag,
+            seq,
+        };
+
         let mut lock = self.data.write().unwrap();
         // only notify if the ip was initially absent
         if !lock.contains_key(&ip) {
-            let _ = self.tx.send(ip);
+            let _ = self.tx.send(node.clone());
         }
         // always overwrite to update last seen
-        lock.insert(
-            ip.clone(),
-            Node {
-                ip,
-                last_seen: Instant::now(),
-                tag,
-                seq,
-            },
-        );
+        lock.insert(ip.clone(), node);
     }
 
     pub fn all(&self) -> Vec<Node> {
