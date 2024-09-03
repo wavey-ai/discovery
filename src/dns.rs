@@ -42,6 +42,7 @@ pub async fn discover(
     for interface in interfaces {
         if let Some(ip) = get_ip(interface) {
             own_ips.insert(ip);
+            info!("added own public ip {} to ignore list", ip.to_string());
         }
     }
     own_ips.insert(Ipv4Addr::new(127, 0, 0, 1));
@@ -98,8 +99,10 @@ async fn perform_dns_checks(
                         info!("Discovered new node via DNS: {}", ip);
                     }
 
-                    // always add to update last seen
-                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
+                    // always add to update last seen unless own ip
+                    if !own_ips.contains(&ip) {
+                        nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
+                    }
                 }
                 Ok(None) => {
                     info!("No DNS results subdomain={} domain={}", subdomain, domain);
