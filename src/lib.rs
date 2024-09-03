@@ -19,6 +19,7 @@ pub struct Node {
     tag: Option<String>,
     seq: Option<u32>,
     last_seen: Instant,
+    is_self: bool,
 }
 
 impl Node {
@@ -59,12 +60,13 @@ impl Nodes {
         lock.contains_key(ip)
     }
 
-    pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>) {
+    pub fn add(&self, ip: Ipv4Addr, tag: Option<String>, seq: Option<u32>, is_self: bool) {
         let node = Node {
             ip,
             last_seen: Instant::now(),
             tag,
             seq,
+            is_self,
         };
 
         let mut lock = self.data.write().unwrap();

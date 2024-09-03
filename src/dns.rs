@@ -99,10 +99,9 @@ async fn perform_dns_checks(
                         info!("Discovered new node via DNS: {}", ip);
                     }
 
-                    // always add to update last seen unless own ip
-                    if !own_ips.contains(&ip) {
-                        nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq));
-                    }
+                    let is_self = own_ips.contains(&ip);
+                    // always add to update last seen
+                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq), is_self);
                 }
                 Ok(None) => {
                     info!("No DNS results subdomain={} domain={}", subdomain, domain);
