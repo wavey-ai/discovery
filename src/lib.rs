@@ -35,6 +35,9 @@ impl Node {
     pub fn seq(&self) -> Option<u32> {
         self.seq
     }
+    pub fn is_self(&self) -> bool {
+        self.is_self
+    }
 }
 
 pub struct Nodes {
