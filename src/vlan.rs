@@ -93,7 +93,8 @@ pub async fn discover(
                                         info!("Discovered new node: {}", discovered_ip);
                                     }
                                     // always add nodes to refresh last_seen
-                                    nodes_clone.add(discovered_ip, None, None);
+                                    let is_self = own_ip == discovered_ip;
+                                    nodes_clone.add(discovered_ip, None, None, is_self);
                                 };
                             } else {
                                 warn!("Received broadcast from non-private IP: {}", src_addr.ip());
