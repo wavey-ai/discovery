@@ -4,7 +4,7 @@ version = "0.1.5"
 edition = "2021"
 license = "MIT"
 description = "Service discovery via dns and vlan"
-repository = "https://github.com/wavey-ai/discovery"
+repository = "ssh://git@github.com/wavey-ai/discovery"
 readme = "README.md"
 
 [[bin]]
