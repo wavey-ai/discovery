@@ -1,6 +1,6 @@
 use discovery::{dns::discover, vlan};
 use std::collections::HashSet;
-use std::net::{Shutdown, SocketAddr};
+use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     match args {
         Command::Vlan { broadcast_port } => {
-            let (_up, _fin, _shutodwn_tx, nodes) = vlan::discover(broadcast_port).await.unwrap();
+            let (_up, _fin, _shutdown_tx, nodes) = vlan::discover(broadcast_port).await?;
             while let Ok(ip) = nodes.rx().recv().await {
                 dbg!(ip);
             }
@@ -46,10 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let tags: Vec<String> = tags.split(',').map(|s| s.to_string()).collect();
             let mut uniq_ips = HashSet::new();
 
-            let (up_rx, fin_rx, shutdown_rx, nodes) =
-                discover(vec![], dns_server, domain, prefix, tags)
-                    .await
-                    .unwrap();
+            let (up_rx, _fin_rx, shutdown_rx, nodes) =
+                discover(vec![], dns_server, domain, prefix, tags).await?;
 
             let _ = up_rx.await;
 

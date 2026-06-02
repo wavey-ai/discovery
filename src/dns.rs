@@ -1,15 +1,17 @@
-use crate::{Node, Nodes, BROADCAST_INTERVAL, DNS_CHECK_INTERVAL};
+use crate::{Nodes, DNS_CHECK_INTERVAL};
 use if_addrs::get_if_addrs;
 use rustdns::types::*;
 use std::collections::HashSet;
 use std::io;
-use std::net::IpAddr;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{oneshot, watch};
 use tokio::time::{sleep, timeout, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
+
+const MAX_DNS_SEQUENCE: u32 = 100;
+const MAX_CONSECUTIVE_DNS_MISSES: u32 = 3;
 
 pub async fn discover(
     interfaces: Vec<&str>,
@@ -34,8 +36,6 @@ pub async fn discover(
     socket.connect(dns_service).await?;
 
     let nodes = Arc::new(Nodes::new());
-    let dns_service = dns_service.clone();
-    let domain = domain.clone();
     let nodes_clone = Arc::clone(&nodes);
 
     let mut own_ips = HashSet::new();
@@ -47,16 +47,7 @@ pub async fn discover(
     }
     own_ips.insert(Ipv4Addr::new(127, 0, 0, 1));
 
-    perform_dns_checks(
-        &dns_service,
-        &domain,
-        &prefix,
-        &tags,
-        &socket,
-        &nodes_clone,
-        &own_ips,
-    )
-    .await;
+    perform_dns_checks(&domain, &prefix, &tags, &socket, &nodes_clone, &own_ips).await;
 
     let _ = up_tx.send(());
 
@@ -68,7 +59,7 @@ pub async fn discover(
                     break;
                 }
                 _ = sleep(DNS_CHECK_INTERVAL) => {
-                    perform_dns_checks(&dns_service, &domain, &prefix, &tags, &socket, &nodes_clone, &own_ips).await;
+                    perform_dns_checks(&domain, &prefix, &tags, &socket, &nodes_clone, &own_ips).await;
                 },
             }
         }
@@ -80,35 +71,39 @@ pub async fn discover(
 }
 
 async fn perform_dns_checks(
-    dns_service: &SocketAddr,
-    domain: &String,
-    prefix: &String,
+    domain: &str,
+    prefix: &str,
     tags: &[String],
     socket: &UdpSocket,
     nodes: &Arc<Nodes>,
     own_ips: &HashSet<Ipv4Addr>,
 ) {
     for tag in tags {
-        let mut seq = 0;
-        while seq < 100 {
-            seq += 1;
+        let mut consecutive_misses = 0;
+        for seq in 1..=MAX_DNS_SEQUENCE {
             let subdomain = format!("{}-{}-{}", prefix, tag, seq);
-            match get_dns(*dns_service, domain.clone(), socket, subdomain.to_string()).await {
+            match get_dns(domain, socket, &subdomain).await {
                 Ok(Some(ip)) => {
+                    consecutive_misses = 0;
                     if !nodes.test(&ip) && !own_ips.contains(&ip) {
                         info!("Discovered new node via DNS: {}", ip);
                     }
 
                     let is_self = own_ips.contains(&ip);
-                    // always add to update last seen
-                    nodes.add(ip.to_owned(), Some(tag.to_owned()), Some(seq), is_self);
+                    nodes.add(ip, Some(tag.to_owned()), Some(seq), is_self);
                 }
                 Ok(None) => {
-                    info!("No DNS results subdomain={} domain={}", subdomain, domain);
-                    break;
+                    consecutive_misses += 1;
+                    info!(
+                        "No DNS results subdomain={} domain={} consecutive_misses={}",
+                        subdomain, domain, consecutive_misses
+                    );
+                    if consecutive_misses >= MAX_CONSECUTIVE_DNS_MISSES {
+                        break;
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Error querying {}: {}", subdomain, e);
+                    warn!("Error querying {}: {}", subdomain, e);
                     break;
                 }
             }
@@ -117,10 +112,9 @@ async fn perform_dns_checks(
 }
 
 async fn get_dns(
-    dns_service: SocketAddr,
-    domain: String,
+    domain: &str,
     socket: &UdpSocket,
-    subdomain: String,
+    subdomain: &str,
 ) -> io::Result<Option<Ipv4Addr>> {
     let mut m = Message::default();
     m.add_question(
@@ -170,18 +164,4 @@ pub fn get_ip(interface: &str) -> Option<Ipv4Addr> {
     }
 
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_udp() {
-        let domain = String::from("wavey.io");
-        let tags = vec![String::from("uk-lon")];
-        let prefix = String::from("live");
-
-        let addr: SocketAddr = ([8, 8, 8, 8], 53).into();
-    }
 }

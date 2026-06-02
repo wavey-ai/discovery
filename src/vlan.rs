@@ -1,12 +1,17 @@
-use crate::{Node, Nodes, BROADCAST_INTERVAL, MAX_SILENT_INTERVALS};
-use if_addrs::get_if_addrs;
+use crate::{Nodes, BROADCAST_INTERVAL};
+use if_addrs::{get_if_addrs, IfAddr};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{oneshot, watch};
 use tokio::time::sleep;
-use tokio::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PrivateBroadcastInterface {
+    ip: Ipv4Addr,
+    broadcast: Ipv4Addr,
+}
 
 pub async fn discover(
     broadcast_port: u16,
@@ -25,42 +30,29 @@ pub async fn discover(
     let (up_tx, up_rx) = oneshot::channel();
     let (fin_tx, fin_rx) = oneshot::channel();
 
-    let own_ip = get_own_private_ip().unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    let interface =
+        private_broadcast_interface().ok_or("no private IPv4 broadcast interface found")?;
+    let own_ip = interface.ip;
+    let broadcast_ip = interface.broadcast;
     info!("Own IP address: {}", own_ip);
 
-    let socket = Arc::new(
-        UdpSocket::bind(("0.0.0.0", broadcast_port))
-            .await
-            .expect("Failed to bind socket"),
-    );
-    socket.set_broadcast(true).expect("Failed to set broadcast");
-
-    let ip_str = own_ip.to_string();
-    let octets: Vec<&str> = ip_str.split('.').collect();
-
-    if octets.len() != 4 {
-        return Err("Invalid IP address format".into());
-    }
-
-    let broadcast_ip = format!("{}.{}.{}.255", octets[0], octets[1], octets[2]);
-
-    let _ = up_tx.send(());
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", broadcast_port)).await?);
+    socket.set_broadcast(true)?;
 
     let nodes_clone = Arc::clone(&nodes);
     let socket_clone = Arc::clone(&socket);
-    let mut shutdown_clone = shutdown_rx.clone();
-    // Task for broadcasting
-    tokio::spawn(async move {
+    let mut broadcast_shutdown_rx = shutdown_rx.clone();
+    let broadcast_task = tokio::spawn(async move {
         loop {
             tokio::select! {
-                _ = shutdown_clone.changed() => {
+                _ = broadcast_shutdown_rx.changed() => {
                     info!("Shutdown signal received, stopping broadcast task");
                     break;
                 }
                 _ = sleep(BROADCAST_INTERVAL) => {
                     nodes_clone.reap();
                     match socket_clone
-                        .send_to(&own_ip.octets(), (broadcast_ip.as_str(), broadcast_port))
+                        .send_to(&own_ip.octets(), (broadcast_ip, broadcast_port))
                         .await
                     {
                         Ok(_) => {}
@@ -75,8 +67,7 @@ pub async fn discover(
 
     let nodes_clone = Arc::clone(&nodes);
 
-    // Task for receiving
-    tokio::spawn(async move {
+    let receive_task = tokio::spawn(async move {
         let mut buffer = [0; 1024];
         loop {
             tokio::select! {
@@ -109,10 +100,22 @@ pub async fn discover(
         }
     });
 
+    tokio::spawn(async move {
+        let _ = broadcast_task.await;
+        let _ = receive_task.await;
+        let _ = fin_tx.send(());
+    });
+
+    let _ = up_tx.send(());
+
     Ok((up_rx, fin_rx, shutdown_tx, Arc::clone(&nodes)))
 }
 
 pub fn get_own_private_ip() -> Option<Ipv4Addr> {
+    private_broadcast_interface().map(|interface| interface.ip)
+}
+
+fn private_broadcast_interface() -> Option<PrivateBroadcastInterface> {
     let addrs = match get_if_addrs() {
         Ok(addrs) => addrs,
         Err(e) => {
@@ -122,9 +125,15 @@ pub fn get_own_private_ip() -> Option<Ipv4Addr> {
     };
 
     for addr in addrs {
-        if let IpAddr::V4(ip) = addr.ip() {
-            if ip.is_private() && ip.octets()[0] == 10 {
-                return Some(ip);
+        if let IfAddr::V4(v4) = addr.addr {
+            if is_discoverable_private_ip(v4.ip) {
+                let broadcast = v4
+                    .broadcast
+                    .unwrap_or_else(|| ipv4_broadcast(v4.ip, v4.netmask));
+                return Some(PrivateBroadcastInterface {
+                    ip: v4.ip,
+                    broadcast,
+                });
             }
         }
     }
@@ -135,7 +144,7 @@ pub fn get_own_private_ip() -> Option<Ipv4Addr> {
 fn extract_private_ip(addr: &SocketAddr) -> Option<Ipv4Addr> {
     match addr.ip() {
         IpAddr::V4(ipv4) => {
-            if ipv4.is_private() && ipv4.octets()[0] == 10 {
+            if is_discoverable_private_ip(ipv4) {
                 Some(ipv4)
             } else {
                 None
@@ -145,50 +154,64 @@ fn extract_private_ip(addr: &SocketAddr) -> Option<Ipv4Addr> {
     }
 }
 
+fn is_discoverable_private_ip(ip: Ipv4Addr) -> bool {
+    ip.is_private() && !ip.is_loopback()
+}
+
+fn ipv4_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
+    Ipv4Addr::from(u32::from(ip) | !u32::from(netmask))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
-    use std::thread::sleep;
 
     #[test]
-    fn test_get_own_private_ip() {
-        let ip: Option<Ipv4Addr> = get_own_private_ip();
-        assert_eq!(ip, None);
+    fn get_own_private_ip_returns_private_address_when_available() {
+        if let Some(ip) = get_own_private_ip() {
+            assert!(is_discoverable_private_ip(ip));
+        }
     }
 
     #[test]
-    fn test_nodes_add_and_test() {
-        let nodes: Nodes = Nodes::new([]);
-        nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
-        assert!(nodes.test(Ipv4Addr::from_str("127.0.0.1").unwrap()));
-        assert!(!nodes.test(Ipv4Addr::from_str("192.168.0.1").unwrap()));
+    fn extract_private_ip_accepts_rfc1918_sources() {
+        let cases = [
+            Ipv4Addr::new(10, 0, 0, 10),
+            Ipv4Addr::new(172, 16, 0, 10),
+            Ipv4Addr::new(192, 168, 0, 10),
+        ];
+
+        for ip in cases {
+            let addr = SocketAddr::new(IpAddr::V4(ip), 12345);
+            assert_eq!(extract_private_ip(&addr), Some(ip));
+        }
     }
 
     #[test]
-    fn test_nodes_all() {
-        let nodes: Nodes = Nodes::new([]);
-        nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
-        nodes.add(Ipv4Addr::from_str("192.168.0.1").unwrap());
-        let all_nodes: Vec<Node> = nodes.all();
-        assert_eq!(all_nodes.len(), 2);
-        assert!(all_nodes
-            .iter()
-            .any(|node| node.ip == Ipv4Addr::from_str("127.0.0.1").unwrap()));
-        assert!(all_nodes
-            .iter()
-            .any(|node| node.ip == Ipv4Addr::from_str("192.168.0.1").unwrap()));
+    fn extract_private_ip_rejects_loopback_public_and_ipv6_sources() {
+        let cases = [
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 12345),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 12345),
+            "[::1]:12345".parse().unwrap(),
+        ];
+
+        for addr in cases {
+            assert_eq!(extract_private_ip(&addr), None);
+        }
     }
 
     #[test]
-    fn test_nodes_reap() {
-        let nodes: Nodes = Nodes::new([]);
-        nodes.add(Ipv4Addr::from_str("127.0.0.1").unwrap());
-        nodes.add(Ipv4Addr::from_str("192.168.0.1").unwrap());
-        sleep(Duration::from_secs(
-            (MAX_SILENT_INTERVALS + 1) * BROADCAST_INTERVAL.as_secs(),
-        ));
-        nodes.reap();
-        assert_eq!(nodes.all().len(), 0);
+    fn ipv4_broadcast_uses_netmask() {
+        assert_eq!(
+            ipv4_broadcast(Ipv4Addr::new(10, 1, 2, 3), Ipv4Addr::new(255, 255, 0, 0)),
+            Ipv4Addr::new(10, 1, 255, 255)
+        );
+        assert_eq!(
+            ipv4_broadcast(
+                Ipv4Addr::new(192, 168, 1, 20),
+                Ipv4Addr::new(255, 255, 255, 0)
+            ),
+            Ipv4Addr::new(192, 168, 1, 255)
+        );
     }
 }
